@@ -9,11 +9,12 @@
 #define WIFI_ATTEMPT_COUNT 10
 
 enum SystemState {
+  STATE_SETUP,
   STATE_TRANSMITTING,
   STATE_DEBUG,
 };
 
-SystemState currntState = STATE_DEBUG;
+SystemState currntState = STATE_SETUP;
 
 SoftwareSerial btSerial(D4, D3);  //TX RX
 WebSocketsClient webSocket;
@@ -38,6 +39,9 @@ void setup() {
 
 String input = "";
 String data = "";
+
+byte readLock = 1;
+
 byte lock = 0;
 bool btSendLock = true;
 
@@ -47,18 +51,34 @@ void loop() {
   webSocket.loop();
 
   switch (currntState) {
+    case STATE_SETUP:
+      {
+        btSerial.println("ATSP0");
+        delay(1000);
+        currntState = STATE_TRANSMITTING;
+      }
     case STATE_TRANSMITTING:
       {
-        if (millis() - lastTime > 5000) {
-          lastTime = millis();
-          btSerial.println("atz");
-          readELM("atz");
-        }
+        // if (millis() - lastTime > 2000) {
+        //   lastTime = millis();
+        //   btSerial.println("ATZ");
+        //   delay(50);
+        //   readELM("ATZ");
+        // }
+        btSerial.println("010c");
+        readELM("010c");
+
+        btSerial.println("0111");
+        readELM("0111");
+
         break;
       }
     case STATE_DEBUG:
       {
-        readELM(input);
+        if(readLock == 0){
+          readLock++;
+          readELM(input);
+        }
         break;
       }
   }
@@ -68,11 +88,7 @@ void readELM(String key) {
   while (btSerial.available() > 0) {
     char c = btSerial.read();
     if (c == '>') {
-      doc.clear();
-      doc[key] = data;
-      String jsonData;
-      serializeJson(doc, jsonData);fdg
-      webSocket.sendTXT(jsonData);
+      sendData(key, data);
       data = "";
       lock--;
       break;
@@ -80,6 +96,16 @@ void readELM(String key) {
     data += c;
   }
 }
+
+void sendData(String key, String data) {
+  doc.clear();
+  doc["debug"] = currntState == STATE_DEBUG;
+  doc[key] = data;
+  String jsonData;
+  serializeJson(doc, jsonData);
+  webSocket.sendTXT(jsonData);
+}
+
 
 
 void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
@@ -96,18 +122,25 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
         return;
       } else if (msg == "debug on") {
         currntState = STATE_DEBUG;
+        return;
       } else if (msg == "debug off") {
-        currntState = STATE_TRANSMITTING;
+        currntState = STATE_SETUP;
+        return;
       }
 
+      if(currntState != STATE_DEBUG){
+        return;
+      }
+
+      Serial.println(msg);
       if (!btSendLock && lock == 0) {
         btSendLock = true;
         lock++;
+        input = msg;
+        btSerial.println(msg);
+        delay(50);
+        readLock--;
 
-        if (currntState == STATE_DEBUG) {
-          input = msg;
-          btSerial.println(msg);
-        }
       }
       break;
   }
