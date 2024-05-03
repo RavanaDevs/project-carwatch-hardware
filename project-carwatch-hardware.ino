@@ -10,6 +10,9 @@
 
 #define CMD_COUNT 3
 
+String commands[CMD_COUNT] = { "010c", "0111", "0105" };
+int cmdId = 0;
+
 
 SoftwareSerial btSerial(D4, D3);  //TX RX
 WebSocketsClient webSocket;
@@ -33,18 +36,42 @@ void setup() {
 
 
 String data = "";
+String input = "";
+bool reading = false;
 static uint32_t lastTime = millis();
 
 void loop() {
   webSocket.loop();
 
+  if (millis() - lastTime > 1000) {
+    lastTime = millis();
 
+    if (!reading) {
+      btSerial.println(commands[cmdId]);
+      delay(100);
+      cmdId++;
+      if (cmdId == CMD_COUNT)
+        cmdId = 0;
+    }
+
+    while (btSerial.available() > 0) {
+      reading = true;
+      char c = btSerial.read();
+      if (c == '>') {
+        sendData("data",data);
+        data = "";
+        reading = false;
+        break;
+      }
+      data += c;
+    }
+    // delay(1000);
+  }
 }
 
 
 void sendData(String key, String data) {
   doc.clear();
-  doc["debug"] = currntState == STATE_DEBUG;
   doc[key] = data;
   String jsonData;
   serializeJson(doc, jsonData);
