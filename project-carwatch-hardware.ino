@@ -3,22 +3,26 @@
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 #include <SoftwareSerial.h>
+#include <floatToString.h>
+#include <TinyGPSPlus.h>
 
-#define WIFI_SSID "Sanju's iPhone"
+// #define WIFI_SSID "Sanju's iPhone"
+#define WIFI_SSID "sanju-server"
 #define WIFI_PASSWORD "12345678"
-#define WIFI_ATTEMPT_COUNT 10
+//#define WIFI_ATTEMPT_COUNT 10
 
 #define TIMER1_SIZE 2
 #define TIMER2_SIZE 2
 #define TIMER3_SIZE 2
 
 #define TIMER1_DELAY 1000
-#define TIMER2_DELAY 5000
-#define TIMER3_DELAY 10000
+#define TIMER2_DELAY 5500
+#define TIMER3_DELAY 9000
+#define TIMER4_DELAY 15000
 
 String timer1_cmd[TIMER1_SIZE] = { "010c", "010d" };
-String timer2_cmd[TIMER2_SIZE] = { "0147", "0105" };
-String timer3_cmd[TIMER3_SIZE] = { "0103", "010a" };
+String timer2_cmd[TIMER2_SIZE] = { "0111", "0105" };  // throttle position, engine coolent temp
+String timer3_cmd[TIMER3_SIZE] = { "0103", "0104" };  // fuel system status, fuel pressure
 
 int timer1Id = 0;
 int timer2Id = 0;
@@ -27,17 +31,22 @@ int timer3Id = 0;
 uint32_t timer1 = millis();
 uint32_t timer2 = millis();
 uint32_t timer3 = millis();
+uint32_t timer4 = millis();
 
-
+TinyGPSPlus gps;
+SoftwareSerial gpsSerial(D6, D5);
 SoftwareSerial btSerial(D4, D3);  //TX RX
 WebSocketsClient webSocket;
 WiFiClient wifiClient;
 StaticJsonDocument<1024> doc;
 
+
 void setup() {
   Serial.begin(9600);
   btSerial.begin(9600);
   delay(5000);
+
+  pinMode(D2, INPUT_PULLUP);
 
   Serial.println("Connecting");
   connectToWIFI();
@@ -45,7 +54,7 @@ void setup() {
   Serial.println(WiFi.localIP());
   //local -> 172.20.10.5
   //int -> 172.105.34.106
-  webSocket.begin("172.105.34.106", 5000, "/ws");
+  webSocket.begin("172.20.10.5", 5000, "/ws");
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
 }
@@ -56,8 +65,44 @@ String input = "";
 bool reading = false;
 static uint32_t lastTime = millis();
 
+bool printed = false;
+int buttonState;
+int lastButtonState = LOW;
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;
+
 void loop() {
   webSocket.loop();
+
+  int reading = digitalRead(D2);
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    // If the current reading is different from the button state
+    if (reading != buttonState) {
+      buttonState = reading;
+
+      // If the button is pressed and the string hasn't been printed yet
+      if (buttonState == LOW && !printed) {
+        // Print the string to the serial port
+        sendData("hzd", "Hazzard alert");
+        Serial.println("Sendign HZD");
+
+        // Set the flag to true to indicate that the string has been printed
+        printed = true;
+      } else if (buttonState == LOW) {
+        // If the button is not pressed, reset the flag
+        printed = false;
+      }
+    }
+  }
+
+  // Update last button state
+  lastButtonState = reading;
+
+
   uint32_t currntTime = millis();
 
   if ((currntTime - timer1) > TIMER1_DELAY) {
@@ -96,6 +141,11 @@ void loop() {
     }
   }
 
+  if ((currntTime - timer4) > TIMER4_DELAY) {
+    timer4 = currntTime;
+    getLocation();
+  }
+
   while (btSerial.available() > 0) {
     reading = true;
     char c = btSerial.read();
@@ -107,6 +157,28 @@ void loop() {
     }
     data += c;
   }
+}
+
+String LON, LAT;
+
+void getLocation() {
+  LAT = String(gps.location.lat(), 6);
+  LON = String(gps.location.lng(), 6);
+
+  String location = LON + "," + LAT;
+  // Serial.println(location);
+  sendData("gps", location);
+
+  encordGPS(700);
+}
+
+void encordGPS(unsigned long ms) {
+  unsigned long start = millis();
+  do {
+    while (gpsSerial.available()) {
+      gps.encode(gpsSerial.read());
+    }
+  } while (millis() - start < ms);
 }
 
 
